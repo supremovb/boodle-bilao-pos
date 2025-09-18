@@ -21,11 +21,11 @@ import {
   MenuItem,
   InputAdornment,
   Chip,
-  OutlinedInput,
+  // OutlinedInput,
   Divider,
   useMediaQuery,
-  Checkbox,
-  ListItemText,
+  // Checkbox,
+  // ListItemText,
   Pagination,
   CircularProgress
 } from "@mui/material";
@@ -41,21 +41,15 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import PaidIcon from "@mui/icons-material/Paid";
 import MoneyOffIcon from "@mui/icons-material/MoneyOff";
 import AttachMoneyIcon from "@mui/icons-material/AttachMoney";
-import GroupIcon from "@mui/icons-material/Group";
-import ScienceIcon from "@mui/icons-material/Science";
-import EmojiEventsIcon from "@mui/icons-material/EmojiEvents";
+// import GroupIcon from "@mui/icons-material/Group";
+// import ScienceIcon from "@mui/icons-material/Science";
+// import EmojiEventsIcon from "@mui/icons-material/EmojiEvents";
 import { format } from "date-fns";
 import { reduceProductStock } from "../services/ServiceManagementPage"; // Import stock reducer
-import { Grid } from "@mui/material";
+// import { Grid } from "@mui/material";
 import { setLocal, queueSync, getAllLocal, isSyncing, onSyncStatus } from "../../utils/offlineSync";
 
-const VARIETIES = [
-  { key: "motor", label: "Motor" },
-  { key: "small", label: "Small" },
-  { key: "medium", label: "Medium" },
-  { key: "large", label: "Large" },
-  { key: "xlarge", label: "X-Large" }
-];
+// const VARIETIES = [ ... ]
 
 const PAYMENT_METHODS = [
   { key: "cash", label: "Cash" },
@@ -64,25 +58,7 @@ const PAYMENT_METHODS = [
   { key: "maya", label: "Maya" }
 ];
 
-// Update Service interface to include chemicals
-interface Service {
-  id: string;
-  name: string;
-  description: string;
-  prices: { [variety: string]: number };
-  chemicals?: {
-    [chemicalId: string]: {
-      name: string;
-      usage: { [variety: string]: number };
-    }
-  };
-}
-
-interface Employee {
-  id: string;
-  firstName: string;
-  lastName: string;
-}
+// Service and Employee interfaces removed (not used in this file)
 
 // Add quantity to PaymentRecord for product sales
 interface PaymentRecord {
@@ -115,6 +91,18 @@ interface PaymentRecord {
     price: number;
     quantity: number;
   }[];
+  // Sales type (in-store or delivery) and delivery info
+  salesType?: "in_store" | "delivery";
+  delivery?: {
+    fbName?: string;
+    contactNumber?: string;
+    address?: string;
+    time?: string;
+  };
+  // Delivery extras
+  deliveryCharge?: number;
+  deliveryLandmark?: string;
+  deliveryRemarks?: string;
 }
 
 interface PaymentServicesPageProps {
@@ -163,6 +151,15 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
   const [selectedCustomer, setSelectedCustomer] = useState<{ id?: string; name: string } | null>(null);
   const [customerInput, setCustomerInput] = useState(""); // For manual entry
   const [loyaltyCustomers, setLoyaltyCustomers] = useState<LoyaltyCustomer[]>([]);
+  // Sales type and delivery fields
+  const [salesType, setSalesType] = useState<"in_store" | "delivery">("in_store");
+  const [deliveryFbName, setDeliveryFbName] = useState("");
+  const [deliveryContactNumber, setDeliveryContactNumber] = useState("");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [deliveryTime, setDeliveryTime] = useState("");
+  const [deliveryCharge, setDeliveryCharge] = useState<number | "">("");
+  const [deliveryRemarks, setDeliveryRemarks] = useState("");
+  const [deliveryLandmark, setDeliveryLandmark] = useState("");
   const [formPaymentMethod, setFormPaymentMethod] = useState(PAYMENT_METHODS[0].key);
   const [amountTendered, setAmountTendered] = useState<number | "">("");
   const [change, setChange] = useState<number>(0);
@@ -170,6 +167,8 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
   const [payingRecordId, setPayingRecordId] = useState<string | null>(null);
   const [selectedRecord, setSelectedRecord] = useState<PaymentRecord | null>(null);
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
+  const [receiptModalOpen, setReceiptModalOpen] = useState(false);
+  const [lastPrintedRecord, setLastPrintedRecord] = useState<PaymentRecord | null>(null);
 
   // Search/filter state
   const [searchCustomer, setSearchCustomer] = useState("");
@@ -322,21 +321,174 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
 
   // Calculate total price for all selected products
   const calcTotalPrice = () => {
-    return selectedProducts.reduce((sum, sp) => {
+    const productsTotal = selectedProducts.reduce((sum, sp) => {
       const product = products.find(p => p.id === sp.productId);
       return sum + (product ? product.price * sp.quantity : 0);
     }, 0);
+    const dc = salesType === "delivery" ? (typeof deliveryCharge === "number" ? deliveryCharge : 0) : 0;
+    return productsTotal + dc;
+  };
+
+  // Validate delivery fields
+  const isDeliveryValid = () => {
+    if (salesType !== "delivery") return true;
+    return Boolean(deliveryFbName.trim() && deliveryContactNumber.trim() && deliveryAddress.trim() && deliveryTime.trim());
   };
 
   // Update change when amountTendered or total price changes
   useEffect(() => {
-    const total = calcTotalPrice();
+    // Compute total inline (same logic as calcTotalPrice) to avoid missing hook dependency
+    const productsTotal = selectedProducts.reduce((sum, sp) => {
+      const product = products.find(p => p.id === sp.productId);
+      return sum + (product ? product.price * sp.quantity : 0);
+    }, 0);
+    const dc = salesType === "delivery" ? (typeof deliveryCharge === "number" ? deliveryCharge : 0) : 0;
+    const total = productsTotal + dc;
     if (typeof amountTendered === "number" && !isNaN(amountTendered)) {
       setChange(amountTendered - total);
     } else {
       setChange(0);
     }
-  }, [amountTendered, selectedProducts]);
+  }, [amountTendered, selectedProducts, products, salesType, deliveryCharge]);
+
+  // Helper to render a simple receipt HTML (sized for ~80mm thermal receipt)
+  const renderReceiptHtml = (r: PaymentRecord) => {
+    // Helper to compute continuous order number starting at 1
+    const getOrderNumber = (rec: PaymentRecord) => {
+      try {
+        const all = Array.isArray(records) ? records.slice() : [];
+        // include current record if not present
+        if (!all.some(a => a.id && rec.id && a.id === rec.id)) {
+          all.push(rec as PaymentRecord);
+        }
+        all.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+        // prefer exact id match
+        if (rec.id) {
+          const idx = all.findIndex(x => x.id === rec.id);
+          if (idx !== -1) return idx + 1;
+        }
+        // fallback: match by createdAt and price
+        const idx2 = all.findIndex(x => (x.createdAt || 0) === (rec.createdAt || 0) && (x.price || 0) === (rec.price || 0));
+        if (idx2 !== -1) return idx2 + 1;
+        // ultimate fallback: count records with createdAt <= this
+        return all.filter(x => (x.createdAt || 0) <= (rec.createdAt || 0)).length || 1;
+      } catch {
+        return 1;
+      }
+    };
+    // Receipt header matching the attached sample
+    const storeName = 'Boodle Bilao Food Hub';
+    const branch = 'R-Jonahs Imus Branch';
+    const addressLine = '36 Niog Road';
+    const cityLine = 'Bacoor, Cavite 4102';
+    const phone = '000465371521';
+    // Format createdAt into PH local time (Asia/Manila) with AM/PM
+    let dateStr = new Date().toLocaleString();
+    try {
+      const created = r.createdAt ? new Date(r.createdAt) : new Date();
+      dateStr = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Manila' }).format(created);
+    } catch {
+      dateStr = r.createdAt ? new Date(r.createdAt).toLocaleString() : new Date().toLocaleString();
+    }
+    const items = Array.isArray(r.products) ? r.products : [];
+    const paymentMethod = PAYMENT_METHODS.find(m => m.key === r.paymentMethod)?.label || r.paymentMethod || "-";
+  const formatMoney = (v: number) => `Php${v.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}`;
+  const amountTenderedStr = typeof r.amountTendered === 'number' ? formatMoney(r.amountTendered) : '-';
+  const changeStr = typeof r.change === 'number' ? formatMoney(r.change) : '-';
+  const deliveryChargeValue = typeof r.deliveryCharge === 'number' ? r.deliveryCharge : 0;
+    const deliveryInfo = r.salesType === 'delivery' && r.delivery ? r.delivery : null;
+    const htmlItems = items.map(it => `
+      <tr>
+        <td style="padding:4px 0">${it.productName}</td>
+        <td style="padding:4px 0" align="right">${it.quantity} x Php${it.price.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+        <td style="padding:4px 0" align="right">Php${(it.price * it.quantity).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+      </tr>
+    `).join('\n');
+
+    // Ticket #: use a short ticket derived from createdAt or id
+    const ticketNum = r.id ? String(r.id).slice(-6) : String(r.createdAt || Date.now()).slice(-6);
+
+    const orderNumber = getOrderNumber(r);
+
+    return `<!doctype html>
+      <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Receipt</title>
+        <style>
+          body { font-family: monospace; width: 300px; margin: 0; padding: 8px; }
+          .center { text-align: center; }
+          .small { font-size: 11px; }
+          .muted { color: #444; }
+          table { width: 100%; border-collapse: collapse; font-size: 12px; }
+          td { vertical-align: top; }
+          .right { text-align: right; }
+          .total { font-weight: 700; font-size: 14px; }
+          hr { border: none; border-top: 1px dashed #444; margin: 8px 0; }
+        </style>
+      </head>
+      <body>
+        <div class="center"><b>${storeName}</b></div>
+        <div class="center small">${branch}</div>
+        <div class="center small">${addressLine}</div>
+        <div class="center small">${cityLine}</div>
+        <div class="center small">${phone}</div>
+        <div style="height:6px"></div>
+  <div style="display:flex;justify-content:space-between"><div>Order #: ${orderNumber}</div><div>${r.salesType === 'delivery' ? 'Delivery' : ''}</div></div>
+        <div style="display:flex;justify-content:space-between"><div>Ticket #: ${ticketNum}</div><div>${dateStr}</div></div>
+        <hr />
+        <table>
+          ${htmlItems}
+          ${deliveryChargeValue > 0 ? `
+            <tr>
+              <td style="padding:4px 0">Delivery Charge</td>
+              <td style="padding:4px 0" align="right">&nbsp;</td>
+              <td style="padding:4px 0" align="right">${formatMoney(deliveryChargeValue)}</td>
+            </tr>
+          ` : ''}
+        </table>
+        <hr />
+        <div style="display:flex;justify-content:space-between"><div class="total">TOTAL:</div><div class="total">${formatMoney((r.price || 0))}</div></div>
+        <div style="display:flex;justify-content:space-between" class="small"><div>Payment</div><div>${paymentMethod}</div></div>
+        <div style="display:flex;justify-content:space-between" class="small"><div>Amount Tendered</div><div>${amountTenderedStr}</div></div>
+        <div style="display:flex;justify-content:space-between" class="small"><div>Change</div><div>${changeStr}</div></div>
+        ${deliveryInfo ? `
+          <hr />
+          <div class="small">FB Name: ${deliveryInfo.fbName || '-'}</div>
+          <div class="small">Contact: ${deliveryInfo.contactNumber || '-'}</div>
+          <div class="small">Address: ${deliveryInfo.address || '-'}</div>
+          <div class="small">Time: ${formatDeliveryTime(deliveryInfo.time)}</div>
+        ` : ''}
+        <hr />
+        <div class="center small muted">THIS IS NOT AN OFFICIAL RECEIPT</div>
+        <div style="height:8px"></div>
+      </body>
+      </html>`;
+  };
+
+  // Print helper: opens a new window with receipt HTML sized for thermal receipt and triggers print
+  const handlePrintRecord = (r: PaymentRecord | null) => {
+    if (!r) return;
+    try {
+      const html = renderReceiptHtml(r);
+      const w = window.open('', '_blank', 'width=360,height=640');
+      if (!w) {
+        setSnackbar({ open: true, message: 'Failed to open print window (popup blocked).', severity: 'error' });
+        return;
+      }
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+      w.focus();
+      // Give the window a moment to layout before print
+      setTimeout(() => {
+        try { w.print(); } catch (e) { /* ignore */ }
+      }, 500);
+    } catch (e) {
+      console.error('[Payments] print error', e);
+      setSnackbar({ open: true, message: 'Failed to print receipt', severity: 'error' });
+    }
+  };
 
   // Add or update a product in the selectedProducts array
   const handleProductSelect = (productId: string) => {
@@ -379,6 +531,55 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
     return [];
   }
 
+  // Safely read delivery fields (delivery may be an object or a JSON string in some records)
+  function getDeliveryField(record: PaymentRecord, key: keyof NonNullable<PaymentRecord['delivery']>) {
+    const d: any = (record && (record as any).delivery) || null;
+    if (!d) return "-";
+    if (typeof d === "string") {
+      try {
+        const parsed = JSON.parse(d);
+        return parsed?.[key] ?? "-";
+      } catch {
+        return d || "-";
+      }
+    }
+    return d[key] ?? "-";
+  }
+
+  // Format delivery time into PH local time (Asia/Manila) with AM/PM.
+  // Accepts time in forms: 'HH:mm', ISO string, numeric timestamp, or Date.
+  function formatDeliveryTime(value: any) {
+    if (!value || value === "-") return "-";
+    // If it's already a Date
+    let date: Date | null = null;
+    if (value instanceof Date) date = value;
+    if (typeof value === "number") date = new Date(value);
+    if (typeof value === "string") {
+      // time-only like '13:30' -> convert to 12-hour string without timezone adjustment
+      if (/^\d{1,2}:\d{2}$/.test(value)) {
+        const [hhStr, mmStr] = value.split(":");
+        const hh = Number(hhStr);
+        const mm = Number(mmStr);
+        if (!Number.isNaN(hh) && !Number.isNaN(mm)) {
+          const suffix = hh >= 12 ? "PM" : "AM";
+          const displayHour = ((hh + 11) % 12) + 1;
+          return `${displayHour}:${mm.toString().padStart(2, "0")} ${suffix}`;
+        }
+      }
+      // try parsing ISO or full datetime
+      const parsed = Date.parse(value);
+      if (!Number.isNaN(parsed)) date = new Date(parsed);
+    }
+    if (!date) return String(value);
+    try {
+      const fmt = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Manila" });
+      return fmt.format(date);
+    } catch {
+      // fallback: format using local timezone
+      return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true });
+    }
+  }
+
   // Save payment (multi-product, single transaction)
   const handleAddPayment = async () => {
     try {
@@ -394,7 +595,6 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
         setSnackbar({ open: true, message: "Please select at least one product.", severity: "error" });
         return;
       }
-      const now = Date.now();
       const productsDetails = productsForSale.map(sp => {
         const product = products.find(p => p.id === sp.productId);
         return {
@@ -404,7 +604,9 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
           quantity: sp.quantity
         };
       });
-      const totalPrice = productsDetails.reduce((sum, p) => sum + (p.price * p.quantity), 0);
+  const productsTotal = productsDetails.reduce((sum, p) => sum + (p.price * p.quantity), 0);
+  const dc = salesType === "delivery" ? (typeof deliveryCharge === "number" ? deliveryCharge : 0) : 0;
+  const totalPrice = productsTotal + dc;
 
       let cashier = cashierUsername;
       let cashierFullName = [firstName, lastName].filter(Boolean).join(" ");
@@ -419,35 +621,92 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
         }
       } catch { /* fallback to props */ }
 
-      if (payingRecordId && selectedRecord) {
-        // Only allow updating unpaid record online (for simplicity)
-        if (!isOnline()) {
-          setSnackbar({ open: true, message: "Cannot process unpaid record offline.", severity: "error" });
-          return;
-        }
-        // Update the existing unpaid record to mark as paid
-        await updateDoc(doc(db, "payments", payingRecordId), {
+  if (payingRecordId && selectedRecord) {
+        // Build delivery payload cleaned
+        const deliveryRaw = salesType === "delivery" ? {
+          fbName: deliveryFbName,
+          contactNumber: deliveryContactNumber,
+          address: deliveryAddress,
+          time: deliveryTime,
+        } : undefined;
+        const deliveryClean = deliveryRaw ? JSON.parse(JSON.stringify(deliveryRaw)) : undefined;
+
+        const updatePayload: any = {
+          id: payingRecordId,
           paid: true,
           paymentMethod: formPaymentMethod,
           amountTendered: typeof amountTendered === "number" ? amountTendered : undefined,
           change: typeof amountTendered === "number" ? amountTendered - totalPrice : undefined,
           cashier,
           cashierFullName,
+          // Persist price including delivery charge so receipts show correct TOTAL
           price: totalPrice,
           products: productsDetails,
           customerName,
+          salesType,
+          deliveryCharge: salesType === "delivery" ? (typeof deliveryCharge === "number" ? deliveryCharge : undefined) : undefined,
+          deliveryLandmark: salesType === "delivery" ? (deliveryLandmark || undefined) : undefined,
+          deliveryRemarks: salesType === "delivery" ? (deliveryRemarks || undefined) : undefined,
           createdAt: selectedRecord.createdAt, // preserve original timestamp
-        });
+        };
+        if (deliveryClean !== undefined) updatePayload.delivery = deliveryClean;
 
-        // Reduce stock for each product sold
-        for (const prod of productsDetails) {
-          if (prod.productId && prod.quantity > 0) {
-            await reduceProductStock(prod.productId, prod.quantity);
+        // Clean payload to remove undefined
+        const finalUpdate = JSON.parse(JSON.stringify(updatePayload));
+
+        if (isOnline()) {
+          // Online: update directly in Firestore
+          await updateDoc(doc(db, "payments", payingRecordId), finalUpdate);
+
+          // Reduce stock for each product sold
+          for (const prod of productsDetails) {
+            if (prod.productId && prod.quantity > 0) {
+              await reduceProductStock(prod.productId, prod.quantity);
+            }
+          }
+
+          snackbarPending.current = { open: true, message: "Payment recorded!", severity: "success" };
+          // Show receipt modal and allow printing for updated record
+          setLastPrintedRecord({ ...selectedRecord, ...finalUpdate });
+          setReceiptModalOpen(true);
+        } else {
+          // Offline: either update the existing offline 'add' entry, or queue an 'update' for a real Firestore id
+          try {
+            if (String(payingRecordId).startsWith("offline-")) {
+              // Update local offline record and replace queued 'add' entry with updated object
+              const offlineRecord = { ...selectedRecord, ...finalUpdate };
+              // Ensure id remains the offline id
+              offlineRecord.id = payingRecordId;
+              const offlineClean = JSON.parse(JSON.stringify(offlineRecord));
+              await setLocal("payments", offlineClean);
+              // Replace queued 'add' (idb.put will overwrite by key)
+              await queueSync("add", "payments", offlineClean);
+
+              // Show receipt modal and snackbar
+              setLastPrintedRecord(offlineClean as PaymentRecord);
+              setReceiptModalOpen(true);
+              setSnackbar({ open: true, message: "Payment recorded offline. It will be synced when you are online.", severity: "info" });
+            } else {
+              // The record has a real Firestore id but we're offline: queue an update
+              const updateObj = { ...finalUpdate };
+              // queueSync will put an entry keyed by 'payments:<id>' with action 'update'
+              await queueSync("update", "payments", updateObj);
+              // Also update local cache for immediate UI
+              const localCopy = { ...selectedRecord, ...finalUpdate };
+              await setLocal("payments", JSON.parse(JSON.stringify(localCopy)));
+
+              setLastPrintedRecord(localCopy as PaymentRecord);
+              setReceiptModalOpen(true);
+              setSnackbar({ open: true, message: "Payment queued and will sync when online.", severity: "info" });
+            }
+          } catch (err) {
+            console.error('[Payments] offline update error', err);
+            setSnackbar({ open: true, message: 'Failed to queue offline payment update.', severity: 'error' });
+            return;
           }
         }
-
-        snackbarPending.current = { open: true, message: "Payment recorded!", severity: "success" };
-      } else {
+    
+  } else {
         // Create new record (normal flow)
         const now = Date.now();
         // Remove the id field from the record when adding online!
@@ -458,6 +717,7 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
           variety: "",
           serviceId: "",
           serviceName: "",
+          // Persist price including delivery charge
           price: totalPrice,
           cashier,
           cashierFullName,
@@ -470,17 +730,38 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
             change: typeof amountTendered === "number" ? amountTendered - totalPrice : undefined
           }),
           products: productsDetails,
+          salesType,
+          delivery: salesType === "delivery" ? {
+            fbName: deliveryFbName,
+            contactNumber: deliveryContactNumber,
+            address: deliveryAddress,
+            time: deliveryTime,
+          } : undefined,
+          deliveryCharge: salesType === "delivery" ? (typeof deliveryCharge === "number" ? deliveryCharge : undefined) : undefined,
+          deliveryLandmark: salesType === "delivery" ? (deliveryLandmark || undefined) : undefined,
+          deliveryRemarks: salesType === "delivery" ? (deliveryRemarks || undefined) : undefined,
           // id: isOnline() ? undefined : `offline-${now}-${Math.floor(Math.random() * 100000)}` // <-- REMOVE id for online
         };
 
         if (isOnline()) {
-          await addDoc(collection(db, "payments"), record);
+          console.debug("[Payments] Adding record online", { record, payLater });
+          // Clean record (remove undefined) before sending to Firestore
+          const finalRecord = JSON.parse(JSON.stringify(record));
+          await addDoc(collection(db, "payments"), finalRecord);
           snackbarPending.current = { open: true, message: payLater ? "Products recorded as unpaid." : "Payment recorded!", severity: "success" };
+          // Show receipt modal for newly added record
+          setLastPrintedRecord(finalRecord as PaymentRecord);
+          setReceiptModalOpen(true);
         } else {
-          // For offline, add id field
+          console.debug("[Payments] Offline - queuing record", { record });
+          // For offline, add id field and clean it before storing/queueing
           const offlineRecord = { ...record, id: `offline-${now}-${Math.floor(Math.random() * 100000)}` };
-          await setLocal("payments", offlineRecord);
-          await queueSync("add", "payments", offlineRecord);
+          const offlineRecordClean = JSON.parse(JSON.stringify(offlineRecord));
+          await setLocal("payments", offlineRecordClean);
+          await queueSync("add", "payments", offlineRecordClean);
+          // Show receipt modal for offline record
+          setLastPrintedRecord(offlineRecordClean as PaymentRecord);
+          setReceiptModalOpen(true);
           // IMMEDIATELY show snackbar and close dialogs in offline mode
           setSnackbar({
             open: true,
@@ -494,6 +775,12 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
           setSelectedProducts([]);
           setSelectedCustomer(null);
           setCustomerInput("");
+          // reset delivery fields
+          setSalesType("in_store");
+          setDeliveryFbName("");
+          setDeliveryContactNumber("");
+          setDeliveryAddress("");
+          setDeliveryTime("");
           setFormPaymentMethod(PAYMENT_METHODS[0].key);
           setAmountTendered("");
           setChange(0);
@@ -519,17 +806,24 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
       setSelectedProducts([]);
       setSelectedCustomer(null);
       setCustomerInput("");
+  // reset delivery fields
+  setSalesType("in_store");
+  setDeliveryFbName("");
+  setDeliveryContactNumber("");
+  setDeliveryAddress("");
+  setDeliveryTime("");
       setFormPaymentMethod(PAYMENT_METHODS[0].key);
       setAmountTendered("");
       setChange(0);
       fetchRecords();
     } catch (err) {
-      setSnackbar({ open: true, message: "Failed to record payment", severity: "error" });
+      console.error("[Payments] handleAddPayment error:", err);
+      const msg = err && (err as any).message ? (err as any).message : String(err);
+      setSnackbar({ open: true, message: `Failed to record payment: ${msg}`, severity: "error" });
     }
   };
 
-  // Quick amount buttons
-  const quickAmounts = [100, 200, 300, 500, 1000];
+  // Quick amount buttons (inline constant used in UI below)
 
   // Handle row click to show details or process payment if unpaid
   const handleRowClick = (record: PaymentRecord) => {
@@ -544,6 +838,21 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
       setSelectedProducts(getProductsFromRecord(record));
       setSelectedCustomer({ name: record.customerName }); // Set customer from record
       setCustomerInput(record.customerName || "");
+      setSelectedRecord(record);
+      // Populate delivery fields if present
+      if (record.salesType === "delivery" && record.delivery) {
+        setSalesType("delivery");
+        setDeliveryFbName(record.delivery.fbName || "");
+        setDeliveryContactNumber(record.delivery.contactNumber || "");
+        setDeliveryAddress(record.delivery.address || "");
+        setDeliveryTime(record.delivery.time || "");
+      } else {
+        setSalesType("in_store");
+        setDeliveryFbName("");
+        setDeliveryContactNumber("");
+        setDeliveryAddress("");
+        setDeliveryTime("");
+      }
       setProcessDialogOpen(true);
       setAmountTendered(record.price);
       setPayLater(false);
@@ -568,16 +877,7 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
     .filter(r => r.paid && !r.voided)
     .reduce((sum, r) => sum + (typeof r.price === "number" ? r.price : 0), 0);
 
-  // Most availed services (top 3)
-  const serviceCount: { [serviceName: string]: number } = {};
-  records.forEach(r => {
-    if (r.serviceName) {
-      serviceCount[r.serviceName] = (serviceCount[r.serviceName] || 0) + 1;
-    }
-  });
-  const mostAvailed = Object.entries(serviceCount)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3);
+  // Most-availed computation removed (not used in UI)
 
   // Unique customers and products for filter dropdowns (daily only)
   const uniqueCustomers = Array.from(new Set(dailyRecords.map(r => r.customerName).filter(Boolean)));
@@ -988,6 +1288,75 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
             sx={{ mb: 2 }}
           />
 
+          {/* Sale type selector (in-store or delivery) */}
+          <Select
+            value={salesType}
+            onChange={e => setSalesType(e.target.value as "in_store" | "delivery")}
+            fullWidth
+            sx={{ mb: 2 }}
+          >
+            <MenuItem value="in_store">In-Store / Walk-in</MenuItem>
+            <MenuItem value="delivery">Delivery</MenuItem>
+          </Select>
+
+          {salesType === "delivery" && (
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+              <TextField
+                label="FB Name"
+                fullWidth
+                margin="normal"
+                value={deliveryFbName}
+                onChange={e => setDeliveryFbName(e.target.value)}
+              />
+              <TextField
+                label="Contact Number"
+                fullWidth
+                margin="normal"
+                value={deliveryContactNumber}
+                onChange={e => setDeliveryContactNumber(e.target.value)}
+              />
+              <TextField
+                label="Address"
+                fullWidth
+                margin="normal"
+                value={deliveryAddress}
+                onChange={e => setDeliveryAddress(e.target.value)}
+              />
+              <TextField
+                label="Preferred Time"
+                type="time"
+                fullWidth
+                margin="normal"
+                value={deliveryTime}
+                onChange={e => setDeliveryTime(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+              />
+              <TextField
+                label="Delivery Charge"
+                fullWidth
+                margin="normal"
+                type="number"
+                value={deliveryCharge}
+                onChange={e => setDeliveryCharge(e.target.value === "" ? "" : Number(e.target.value))}
+                InputProps={{ startAdornment: <InputAdornment position="start">₱</InputAdornment> }}
+              />
+              <TextField
+                label="Landmark"
+                fullWidth
+                margin="normal"
+                value={deliveryLandmark}
+                onChange={e => setDeliveryLandmark(e.target.value)}
+              />
+              <TextField
+                label="Remarks"
+                fullWidth
+                margin="normal"
+                value={deliveryRemarks}
+                onChange={e => setDeliveryRemarks(e.target.value)}
+              />
+            </Box>
+          )}
+
           {/* Product selection: Button to open product grid dialog */}
           <Button
             variant="outlined"
@@ -1051,7 +1420,8 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
             onClick={handleProcessPayment}
             disabled={
               selectedProducts.length === 0 ||
-              calcTotalPrice() <= 0
+              calcTotalPrice() <= 0 ||
+              !isDeliveryValid()
             }
           >
             Process Payment
@@ -1242,11 +1612,11 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
             variant="contained"
             onClick={handleAddPayment}
             disabled={
-              payLater
+              !isDeliveryValid() || (payLater
                 ? false
                 : typeof amountTendered !== "number" ||
                   isNaN(amountTendered) ||
-                  amountTendered < calcTotalPrice()
+                  amountTendered < calcTotalPrice())
             }
           >
             {payLater ? "Record as Unpaid" : "Confirm Payment"}
@@ -1360,7 +1730,26 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
                     {PAYMENT_METHODS.find(m => m.key === selectedRecord.paymentMethod)?.label || selectedRecord.paymentMethod || "-"}
                   </Typography>
                 </Box>
+                <Box sx={{ flex: 1 }}>
+                  <Typography variant="subtitle2" color="text.secondary">Sales Type</Typography>
+                  <Typography>{selectedRecord.salesType === "delivery" ? "Delivery" : "In-Store"}</Typography>
+                </Box>
               </Box>
+              {selectedRecord.salesType === "delivery" && (selectedRecord.delivery || (selectedRecord as any).delivery) && (
+                <Box sx={{ mt: 2 }}>
+                  <Divider />
+                  <Typography variant="subtitle2" color="text.secondary">Delivery Details</Typography>
+                  <Box sx={{ display: "flex", flexDirection: "column", gap: 1, mt: 1 }}>
+                    <Typography><b>FB Name:</b> {getDeliveryField(selectedRecord, 'fbName')}</Typography>
+                    <Typography><b>Contact Number:</b> {getDeliveryField(selectedRecord, 'contactNumber')}</Typography>
+                    <Typography><b>Address:</b> {getDeliveryField(selectedRecord, 'address')}</Typography>
+                    <Typography><b>Time:</b> {formatDeliveryTime(getDeliveryField(selectedRecord, 'time'))}</Typography>
+                    <Typography><b>Delivery Charge:</b> {typeof (selectedRecord.deliveryCharge) === 'number' ? peso(selectedRecord.deliveryCharge) : '-'}</Typography>
+                    <Typography><b>Landmark:</b> {selectedRecord.deliveryLandmark || '-'}</Typography>
+                    <Typography><b>Remarks:</b> {selectedRecord.deliveryRemarks || '-'}</Typography>
+                  </Box>
+                </Box>
+              )}
               {selectedRecord.paid && (
                 <Box sx={{
                   display: "flex",
@@ -1386,11 +1775,34 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
                   </Box>
                 </Box>
               )}
+              {selectedRecord.paid && (
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <Button variant="outlined" onClick={() => handlePrintRecord(selectedRecord)}>Reprint Receipt</Button>
+                </Box>
+              )}
             </Box>
           )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDetailsDialogOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Receipt Modal */}
+      <Dialog open={receiptModalOpen} onClose={() => setReceiptModalOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Receipt</DialogTitle>
+        <DialogContent dividers>
+          {lastPrintedRecord ? (
+            <Box sx={{ fontFamily: 'monospace' }}>
+              <div dangerouslySetInnerHTML={{ __html: renderReceiptHtml(lastPrintedRecord) }} />
+            </Box>
+          ) : (
+            <Typography>No receipt available</Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setReceiptModalOpen(false)}>Close</Button>
+          <Button variant="contained" onClick={() => handlePrintRecord(lastPrintedRecord)}>Print</Button>
         </DialogActions>
       </Dialog>
       <Snackbar

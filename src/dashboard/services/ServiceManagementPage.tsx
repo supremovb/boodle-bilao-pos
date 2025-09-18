@@ -21,6 +21,8 @@ import {
   Tooltip,
   InputAdornment,
   Stack,
+  Select,
+  MenuItem,
   useMediaQuery,
   useTheme,
   createTheme,
@@ -291,7 +293,10 @@ const peso = (v: number) => `₱${v.toLocaleString(undefined, { minimumFractionD
 
 const getProducts = async (): Promise<Product[]> => {
   const snapshot = await getDocs(collection(db, "products"));
-  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Product[];
+  const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Product[];
+  // Sort alphabetically by name (case-insensitive)
+  items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  return items;
 };
 const addProduct = async (product: Omit<Product, "id">) => {
   await addDoc(collection(db, "products"), product);
@@ -342,6 +347,9 @@ const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
   });
   const [snackbar, setSnackbar] = useState({ open: false, message: "", severity: "success" as "success" | "error" | "info" });
   const [search, setSearch] = useState("");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
+  const [page, setPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
   const [addFormErrors, setAddFormErrors] = useState({ name: false, price: false, cost: false, stock: false });
   const [editFormErrors, setEditFormErrors] = useState({ name: false, price: false, cost: false, stock: false });
 
@@ -349,24 +357,33 @@ const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
   const isSm = useMediaQuery(currentTheme.breakpoints.down("sm"));
 
   useEffect(() => {
-    fetchData();
+    const load = async () => {
+      setLoading(true);
+      try {
+        const productsData = await getProducts();
+        const sorted = productsData.slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+        setProducts(sorted);
+      } catch (error) {
+        console.error("Error fetching products:", error);
+        setSnackbar({ open: true, message: "Failed to load data", severity: "error" });
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
   }, []);
-
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      await fetchProducts();
-    } catch (error) {
-      console.error("Error fetching products:", error);
-      setSnackbar({ open: true, message: "Failed to load data", severity: "error" });
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const fetchProducts = async () => {
     const productsData = await getProducts();
-    setProducts(productsData);
+    // Ensure alphabetical order as a safeguard
+    const sorted = productsData.slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    setProducts(sorted);
+  };
+
+  // Backwards-compatible alias: some code paths previously called fetchData
+  // Keep this alias so any lingering references don't crash at runtime.
+  const fetchData = async () => {
+    await fetchProducts();
   };
 
   // Filter by search
@@ -374,6 +391,16 @@ const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
     product.name.toLowerCase().includes(search.toLowerCase()) ||
     (product.description || "").toLowerCase().includes(search.toLowerCase())
   );
+
+  // Apply sort order
+  const sortedProducts = filteredProducts.slice().sort((a, b) => {
+    const cmp = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    return sortOrder === 'asc' ? cmp : -cmp;
+  });
+
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(sortedProducts.length / rowsPerPage));
+  const paginatedProducts = sortedProducts.slice((page - 1) * rowsPerPage, page * rowsPerPage);
 
   const handleAddProduct = async () => {
     const errors = {
@@ -623,7 +650,7 @@ const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                 size="medium"
                 placeholder="Search products..."
                 value={search}
-                onChange={e => setSearch(e.target.value)}
+                onChange={e => { setSearch(e.target.value); setPage(1); }}
                 InputProps={{
                   startAdornment: (
                     <InputAdornment position="start">
@@ -640,26 +667,47 @@ const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                   flex: 1
                 }}
               />
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                onClick={() => setAddDialogOpen(true)}
-                sx={{
-                  minWidth: { xs: "100%", sm: 180 },
-                  fontWeight: 700,
-                  borderRadius: 2.5,
-                  height: 48,
-                  bgcolor: currentTheme.palette.primary.main,
-                  ":hover": { bgcolor: currentTheme.palette.primary.dark },
-                  boxShadow: currentTheme.shadows[3],
-                  "&:hover": {
-                    boxShadow: currentTheme.shadows[6],
-                    transform: "translateY(-2px)",
-                  },
-                }}
-              >
-                {isSm ? "Add Product" : "Add New Product"}
-              </Button>
+              <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                <Select
+                  value={sortOrder}
+                  size="small"
+                  onChange={e => { setSortOrder(e.target.value as "asc" | "desc"); setPage(1); }}
+                  sx={{ minWidth: 140 }}
+                >
+                  <MenuItem value="asc">Sort A → Z</MenuItem>
+                  <MenuItem value="desc">Sort Z → A</MenuItem>
+                </Select>
+                <Select
+                  value={rowsPerPage}
+                  size="small"
+                  onChange={e => { setRowsPerPage(Number(e.target.value)); setPage(1); }}
+                  sx={{ minWidth: 120 }}
+                >
+                  {[5, 10, 20, 50].map(n => (
+                    <MenuItem key={n} value={n}>{n} / page</MenuItem>
+                  ))}
+                </Select>
+                <Button
+                  variant="contained"
+                  startIcon={<AddIcon />}
+                  onClick={() => setAddDialogOpen(true)}
+                  sx={{
+                    minWidth: { xs: "100%", sm: 180 },
+                    fontWeight: 700,
+                    borderRadius: 2.5,
+                    height: 48,
+                    bgcolor: currentTheme.palette.primary.main,
+                    ":hover": { bgcolor: currentTheme.palette.primary.dark },
+                    boxShadow: currentTheme.shadows[3],
+                    "&:hover": {
+                      boxShadow: currentTheme.shadows[6],
+                      transform: "translateY(-2px)",
+                    },
+                  }}
+                >
+                  {isSm ? "Add Product" : "Add New Product"}
+                </Button>
+              </Box>
             </Paper>
           </motion.div>
 
@@ -742,7 +790,7 @@ const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {filteredProducts.map(product => (
+                    {paginatedProducts.map(product => (
                       <TableRow key={product.id} hover sx={{ '&:last-child td': { borderBottom: 0 } }}>
                         <TableCell sx={{ fontWeight: 600, maxWidth: 160 }}>
                           <Typography noWrap title={product.name}>{product.name}</Typography>
@@ -820,7 +868,7 @@ const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                         </TableCell>
                       </TableRow>
                     ))}
-                    {filteredProducts.length === 0 && (
+                    {sortedProducts.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
                           <Box sx={{
@@ -858,6 +906,25 @@ const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                 </Table>
               )}
             </TableContainer>
+            {/* Pagination controls */}
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 2 }}>
+              <Typography variant="body2" color="text.secondary">Page {page} of {totalPages}</Typography>
+              <Box>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  sx={{ mr: 1 }}
+                  disabled={page <= 1}
+                >Prev</Button>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages}
+                >Next</Button>
+              </Box>
+            </Box>
           </motion.div>
         </Box>
 

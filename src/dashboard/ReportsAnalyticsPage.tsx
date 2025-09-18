@@ -243,7 +243,7 @@ const REPORT_RANGE_TYPES = [
   { key: "custom", label: "Custom Range" }
 ];
 
-const SHOP_NAME = "OPENG MILITARY SUPPLIES"; // Updated shop name
+const SHOP_NAME = "BOODLE BILAO"; // Updated shop name
 
 interface ReportData {
   salesByMonth: { [month: string]: number };

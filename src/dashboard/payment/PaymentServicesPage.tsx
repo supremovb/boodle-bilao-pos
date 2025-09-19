@@ -1830,6 +1830,9 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
                     <Typography><b>Contact Number:</b> {getDeliveryField(selectedRecord, 'contactNumber')}</Typography>
                     <Typography><b>Address:</b> {getDeliveryField(selectedRecord, 'address')}</Typography>
                     <Typography><b>Time:</b> {formatDeliveryTime(getDeliveryField(selectedRecord, 'time'))}</Typography>
+                    {getDeliveryField(selectedRecord, 'deliveryDate') ? (
+                      <Typography><b>Delivery Date:</b> {new Intl.DateTimeFormat('en-US', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Asia/Manila' }).format(new Date(getDeliveryField(selectedRecord, 'deliveryDate') as string))}</Typography>
+                    ) : null}
                     <Typography><b>Delivery Charge:</b> {typeof (selectedRecord.deliveryCharge) === 'number' ? peso(selectedRecord.deliveryCharge) : '-'}</Typography>
                     <Typography><b>Landmark:</b> {selectedRecord.deliveryLandmark || '-'}</Typography>
                     <Typography><b>Remarks:</b> {selectedRecord.deliveryRemarks || '-'}</Typography>

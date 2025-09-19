@@ -30,6 +30,8 @@ import {
   CircularProgress
 } from "@mui/material";
 import AppSidebar from "../AppSidebar";
+// Import logo so bundler can resolve the correct public URL
+import boodleLogo from '../../assets/logos/boodle-bilao.jpg';
 import { collection, getDocs, addDoc, updateDoc, doc } from "firebase/firestore";
 import { db, isOnline } from "../../firebase/firebase";
 import { useTheme } from "@mui/material/styles";
@@ -98,6 +100,7 @@ interface PaymentRecord {
     contactNumber?: string;
     address?: string;
     time?: string;
+    deliveryDate?: string;
   };
   // Delivery extras
   deliveryCharge?: number;
@@ -160,6 +163,14 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
   const [deliveryCharge, setDeliveryCharge] = useState<number | "">("");
   const [deliveryRemarks, setDeliveryRemarks] = useState("");
   const [deliveryLandmark, setDeliveryLandmark] = useState("");
+  const [saleDate, setSaleDate] = useState<string>(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  });
+  const [deliveryDate, setDeliveryDate] = useState<string>("");
   const [formPaymentMethod, setFormPaymentMethod] = useState(PAYMENT_METHODS[0].key);
   const [amountTendered, setAmountTendered] = useState<number | "">("");
   const [change, setChange] = useState<number>(0);
@@ -376,19 +387,20 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
         return 1;
       }
     };
-    // Receipt header matching the attached sample
-    const storeName = 'Boodle Bilao Food Hub';
-    const branch = 'R-Jonahs Imus Branch';
-    const addressLine = '36 Niog Road';
-    const cityLine = 'Bacoor, Cavite 4102';
-    const phone = '000465371521';
-    // Format createdAt into PH local time (Asia/Manila) with AM/PM
-    let dateStr = new Date().toLocaleString();
+  // Receipt header updated per request
+  const storeName = 'Boodle Bilao Food Hub';
+  const branch = 'Imus Branch';
+  const addressLine = '#16 Anabu Road, Anabu 2-E,';
+  const cityLine = 'Imus City, Cavite 4103';
+  // Logo path: use imported asset so bundler resolves correct URL
+  const logoPath = boodleLogo;
+    // Format createdAt: date as MM/DD/YYYY (Asia/Manila)
+    let dateStr = '';
     try {
       const created = r.createdAt ? new Date(r.createdAt) : new Date();
-      dateStr = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Manila' }).format(created);
+      dateStr = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Asia/Manila' }).format(created);
     } catch {
-      dateStr = r.createdAt ? new Date(r.createdAt).toLocaleString() : new Date().toLocaleString();
+      dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString() : new Date().toLocaleDateString();
     }
     const items = Array.isArray(r.products) ? r.products : [];
     const paymentMethod = PAYMENT_METHODS.find(m => m.key === r.paymentMethod)?.label || r.paymentMethod || "-";
@@ -405,10 +417,23 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
       </tr>
     `).join('\n');
 
-    // Ticket #: use a short ticket derived from createdAt or id
-    const ticketNum = r.id ? String(r.id).slice(-6) : String(r.createdAt || Date.now()).slice(-6);
-
+    // Ticket #: BBFH001 continuous
     const orderNumber = getOrderNumber(r);
+    const ticketNum = `BBFH${String(orderNumber).padStart(3, '0')}`;
+
+    // Font size adjustment
+    const fontSize = 14;
+
+    // Show client name if delivery
+    const clientNameLine = r.salesType === 'delivery' && r.customerName ? `<div class="center" style="font-size:${fontSize}px"><b>Client: ${r.customerName}</b></div>` : '';
+
+    // Extra fields after address (moved)
+    const extraFields = `<div style="font-size:${fontSize}px;text-align:left;margin-top:4px;">
+      DP:<br />
+      BAL:<br />
+      FREE DC:<br />
+      RIDER'S NAME:<br />
+    </div>`;
 
     return `<!doctype html>
       <html>
@@ -416,26 +441,28 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
         <meta charset="utf-8" />
         <title>Receipt</title>
         <style>
-          body { font-family: monospace; width: 300px; margin: 0; padding: 8px; }
+          body { font-family: monospace; width: 300px; margin: 0; padding: 6px; font-size: ${fontSize}px; line-height: 1.15; }
           .center { text-align: center; }
-          .small { font-size: 11px; }
+          .small { font-size: ${fontSize-2}px; }
           .muted { color: #444; }
-          table { width: 100%; border-collapse: collapse; font-size: 12px; }
-          td { vertical-align: top; }
+          table { width: 100%; border-collapse: collapse; font-size: ${fontSize-2}px; }
+          td { vertical-align: top; padding: 2px 0; }
           .right { text-align: right; }
-          .total { font-weight: 700; font-size: 14px; }
-          hr { border: none; border-top: 1px dashed #444; margin: 8px 0; }
+          .total { font-weight: 700; font-size: ${fontSize+2}px; }
+          hr { border: none; border-top: 1px dashed #444; margin: 6px 0; }
+          img.logo { display:block; margin:0 auto 6px auto; max-width:64px; max-height:64px; }
+          .label { font-weight:700; }
         </style>
       </head>
       <body>
+        <img src="${logoPath}" class="logo" alt="Logo" />
         <div class="center"><b>${storeName}</b></div>
         <div class="center small">${branch}</div>
-        <div class="center small">${addressLine}</div>
-        <div class="center small">${cityLine}</div>
-        <div class="center small">${phone}</div>
+  <div class="center small">${addressLine}</div>
+    <div class="center small">${cityLine}</div>
         <div style="height:6px"></div>
-  <div style="display:flex;justify-content:space-between"><div>Order #: ${orderNumber}</div><div>${r.salesType === 'delivery' ? 'Delivery' : ''}</div></div>
-        <div style="display:flex;justify-content:space-between"><div>Ticket #: ${ticketNum}</div><div>${dateStr}</div></div>
+        <div style="display:flex;justify-content:space-between"><div>Order #: ${orderNumber}</div><div>${r.salesType === 'delivery' ? 'Delivery' : ''}</div></div>
+        <div style="display:flex;justify-content:space-between"><div>Transact #: ${ticketNum}</div><div>${dateStr}</div></div>
         <hr />
         <table>
           ${htmlItems}
@@ -454,14 +481,25 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
         <div style="display:flex;justify-content:space-between" class="small"><div>Change</div><div>${changeStr}</div></div>
         ${deliveryInfo ? `
           <hr />
-          <div class="small">FB Name: ${deliveryInfo.fbName || '-'}</div>
-          <div class="small">Contact: ${deliveryInfo.contactNumber || '-'}</div>
-          <div class="small">Address: ${deliveryInfo.address || '-'}</div>
-          <div class="small">Time: ${formatDeliveryTime(deliveryInfo.time)}</div>
+          ${clientNameLine}
+          <div class="small"><span class="label">FB Name:</span> ${deliveryInfo.fbName || '-'}</div>
+          <div class="small"><span class="label">Contact:</span> ${deliveryInfo.contactNumber || '-'}</div>
+          <div class="small"><span class="label">Address:</span> ${deliveryInfo.address || '-'}</div>
+          ${extraFields}
+          <div class="small"><span class="label">Delivery Time:</span> ${formatDeliveryTime(deliveryInfo.time)}</div>
+          ${deliveryInfo.deliveryDate ? `<div class="small"><span class="label">Delivery Date:</span> ${deliveryInfo.deliveryDate}</div>` : ''}
         ` : ''}
         <hr />
         <div class="center small muted">THIS IS NOT AN OFFICIAL RECEIPT</div>
         <div style="height:8px"></div>
+        <script>
+          // Auto-cut: try to trigger cut if supported
+          window.onload = function() {
+            if (window.matchMedia('print').matches) {
+              setTimeout(function(){window.close();}, 1000);
+            }
+          };
+        </script>
       </body>
       </html>`;
   };
@@ -628,6 +666,7 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
           contactNumber: deliveryContactNumber,
           address: deliveryAddress,
           time: deliveryTime,
+          deliveryDate: deliveryDate || undefined,
         } : undefined;
         const deliveryClean = deliveryRaw ? JSON.parse(JSON.stringify(deliveryRaw)) : undefined;
 
@@ -647,9 +686,9 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
           deliveryCharge: salesType === "delivery" ? (typeof deliveryCharge === "number" ? deliveryCharge : undefined) : undefined,
           deliveryLandmark: salesType === "delivery" ? (deliveryLandmark || undefined) : undefined,
           deliveryRemarks: salesType === "delivery" ? (deliveryRemarks || undefined) : undefined,
-          createdAt: selectedRecord.createdAt, // preserve original timestamp
+          createdAt: saleDate ? new Date(`${saleDate}T00:00:00`).getTime() : selectedRecord.createdAt, // use saleDate if provided
         };
-        if (deliveryClean !== undefined) updatePayload.delivery = deliveryClean;
+  if (deliveryClean !== undefined) updatePayload.delivery = deliveryClean;
 
         // Clean payload to remove undefined
         const finalUpdate = JSON.parse(JSON.stringify(updatePayload));
@@ -708,7 +747,8 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
     
   } else {
         // Create new record (normal flow)
-        const now = Date.now();
+  // Use saleDate (YYYY-MM-DD) if provided, otherwise now
+  const now = saleDate ? new Date(`${saleDate}T00:00:00`).getTime() : Date.now();
         // Remove the id field from the record when adding online!
         const record: PaymentRecord = {
           customerName,
@@ -736,6 +776,7 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
             contactNumber: deliveryContactNumber,
             address: deliveryAddress,
             time: deliveryTime,
+            deliveryDate: deliveryDate || undefined,
           } : undefined,
           deliveryCharge: salesType === "delivery" ? (typeof deliveryCharge === "number" ? deliveryCharge : undefined) : undefined,
           deliveryLandmark: salesType === "delivery" ? (deliveryLandmark || undefined) : undefined,
@@ -862,12 +903,14 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
   };
 
   // Today's date string for filtering
-  const todayStr = format(new Date(), 'yyyy-MM-dd');
+  const [viewDate, setViewDate] = useState<string>(() => format(new Date(), 'yyyy-MM-dd'));
 
-  // Daily records only (for stats and table)
-  const dailyRecords = records.filter(
-    r => format(new Date(r.createdAt), 'yyyy-MM-dd') === todayStr
-  );
+  // Daily records only (for stats and table) - respect viewDate
+  const dailyRecords = records.filter(r => {
+    const created = new Date(r.createdAt);
+    const createdStr = format(created, 'yyyy-MM-dd');
+    return createdStr === viewDate;
+  });
 
   // Stats: daily only
   const totalPayments = dailyRecords.length;
@@ -1085,6 +1128,29 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
               startAdornment: <SearchIcon fontSize="small" sx={{ mr: 1, color: "action.active" }} />
             }}
           />
+          {/* View date navigator: Prev / Today / Next and date picker bound to viewDate */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Button size="small" onClick={() => {
+              const d = new Date(viewDate);
+              d.setDate(d.getDate() - 1);
+              setViewDate(format(d, 'yyyy-MM-dd'));
+            }}>Prev</Button>
+            <Button size="small" onClick={() => setViewDate(format(new Date(), 'yyyy-MM-dd'))}>Today</Button>
+            <Button size="small" onClick={() => {
+              const d = new Date(viewDate);
+              d.setDate(d.getDate() + 1);
+              setViewDate(format(d, 'yyyy-MM-dd'));
+            }}>Next</Button>
+            <TextField
+              label="View Date"
+              type="date"
+              size="small"
+              value={viewDate}
+              onChange={e => setViewDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              sx={{ minWidth: 150 }}
+            />
+          </Box>
           <Select
             value={statusFilter}
             onChange={e => setStatusFilter(e.target.value as "" | "paid" | "unpaid")}
@@ -1288,6 +1354,17 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
             sx={{ mb: 2 }}
           />
 
+          {/* Sale date selector - allow manual sale date */}
+          <TextField
+            label="Sale Date"
+            type="date"
+            size="small"
+            value={saleDate}
+            onChange={e => setSaleDate(e.target.value)}
+            InputLabelProps={{ shrink: true }}
+            sx={{ mb: 2 }}
+          />
+
           {/* Sale type selector (in-store or delivery) */}
           <Select
             value={salesType}
@@ -1329,6 +1406,15 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
                 margin="normal"
                 value={deliveryTime}
                 onChange={e => setDeliveryTime(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+              />
+              <TextField
+                label="Delivery Date"
+                type="date"
+                fullWidth
+                margin="normal"
+                value={deliveryDate}
+                onChange={e => setDeliveryDate(e.target.value)}
                 InputLabelProps={{ shrink: true }}
               />
               <TextField

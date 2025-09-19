@@ -584,6 +584,18 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
     return d[key] ?? "-";
   }
 
+  // Safely format timestamp or date string to a readable local string, fallback to '-' when invalid
+  function safeDateTime(value: any) {
+    if (!value && value !== 0) return '-';
+    try {
+      const d = value instanceof Date ? value : (typeof value === 'number' ? new Date(value) : new Date(String(value)));
+      if (isNaN(d.getTime())) return '-';
+      return d.toLocaleString();
+    } catch {
+      return '-';
+    }
+  }
+
   // Format delivery time into PH local time (Asia/Manila) with AM/PM.
   // Accepts time in forms: 'HH:mm', ISO string, numeric timestamp, or Date.
   function formatDeliveryTime(value: any) {
@@ -615,6 +627,31 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
     } catch {
       // fallback: format using local timezone
       return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true });
+    }
+  }
+
+  // Safely format delivery date (MM/DD/YYYY) or return '-' when invalid
+  function formatDeliveryDate(value: any) {
+    if (!value || value === "-") return "-";
+    let date: Date | null = null;
+    if (value instanceof Date) date = value;
+    if (typeof value === "number") date = new Date(value);
+    if (typeof value === "string") {
+      // Accept 'YYYY-MM-DD' and other ISO formats
+      const parsed = Date.parse(value);
+      if (!Number.isNaN(parsed)) date = new Date(parsed);
+      else {
+        // Try adding time to date-only strings
+        const isoTry = value + 'T00:00:00';
+        const parsed2 = Date.parse(isoTry);
+        if (!Number.isNaN(parsed2)) date = new Date(parsed2);
+      }
+    }
+    if (!date) return "-";
+    try {
+      return new Intl.DateTimeFormat('en-US', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Asia/Manila' }).format(date);
+    } catch {
+      return date.toLocaleDateString();
     }
   }
 
@@ -1233,7 +1270,7 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
                       />
                     )}
                   </TableCell>
-                  <TableCell sx={{ minWidth: 120 }}>{new Date(r.createdAt).toLocaleString()}</TableCell>
+                  <TableCell sx={{ minWidth: 120 }}>{safeDateTime(r.createdAt)}</TableCell>
                   <TableCell>
                     {PAYMENT_METHODS.find(m => m.key === r.paymentMethod)?.label || r.paymentMethod || "-"}
                   </TableCell>
@@ -1733,7 +1770,7 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
                 </Box>
                 <Box sx={{ flex: 1 }}>
                   <Typography variant="subtitle2" color="text.secondary">Date</Typography>
-                  <Typography>{new Date(selectedRecord.createdAt).toLocaleString()}</Typography>
+                  <Typography>{safeDateTime(selectedRecord.createdAt)}</Typography>
                 </Box>
                 <Box sx={{ flex: 1 }}>
                   <Typography variant="subtitle2" color="text.secondary">Cashier</Typography>
@@ -1831,7 +1868,7 @@ const PaymentServicesPage: React.FC<PaymentServicesPageProps> = ({
                     <Typography><b>Address:</b> {getDeliveryField(selectedRecord, 'address')}</Typography>
                     <Typography><b>Time:</b> {formatDeliveryTime(getDeliveryField(selectedRecord, 'time'))}</Typography>
                     {getDeliveryField(selectedRecord, 'deliveryDate') ? (
-                      <Typography><b>Delivery Date:</b> {new Intl.DateTimeFormat('en-US', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Asia/Manila' }).format(new Date(getDeliveryField(selectedRecord, 'deliveryDate') as string))}</Typography>
+                      <Typography><b>Delivery Date:</b> {formatDeliveryDate(getDeliveryField(selectedRecord, 'deliveryDate'))}</Typography>
                     ) : null}
                     <Typography><b>Delivery Charge:</b> {typeof (selectedRecord.deliveryCharge) === 'number' ? peso(selectedRecord.deliveryCharge) : '-'}</Typography>
                     <Typography><b>Landmark:</b> {selectedRecord.deliveryLandmark || '-'}</Typography>

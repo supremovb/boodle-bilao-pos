@@ -21,7 +21,6 @@ import {
   Tooltip,
   LinearProgress,
   Avatar,
-  Badge,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -42,8 +41,7 @@ import {
   PointOfSale as PointOfSaleIcon,
   Search as SearchIcon,
   FilterAlt as FilterIcon,
-  Print as PrintIcon,
-  Download as DownloadIcon,
+  
   Refresh as RefreshIcon,
   Paid as PaidIcon,
   MoneyOff as MoneyOffIcon,
@@ -355,30 +353,41 @@ const SalesTransactionsPage: React.FC = () => {
   // Calculate today's date string for comparison
   const todayStr = format(new Date(), 'yyyy-MM-dd');
 
-  // Only show today's records for everything (stats, table, filters)
-  const todaysRecords = records.filter(
-    r => format(new Date(r.createdAt), 'yyyy-MM-dd') === todayStr
-  );
+  // Role-aware: cashier sees only today's records, admin sees all records
+  const rawRole = (localStorage.getItem('role') || '').toLowerCase();
+  const role = (rawRole === 'admin' ? 'admin' : 'cashier') as 'admin' | 'cashier';
+  const isAdmin = role === 'admin';
 
-  // Unique products for filter dropdown (today only)
+  // Only show today's records when not admin
+  const todaysRecords = records.filter(r => {
+    try {
+      return format(new Date(r.createdAt), 'yyyy-MM-dd') === todayStr;
+    } catch {
+      return false;
+    }
+  });
+
+  const baseRecords = isAdmin ? records : todaysRecords;
+
+  // Unique products for filter dropdown (based on baseRecords)
   const uniqueProducts = Array.from(
     new Set(
-      todaysRecords
+      baseRecords
         .map(r => r.productName || r.serviceName)
         .filter(Boolean)
     )
   );
 
-  // Quick stats (today only)
-  const totalSales = todaysRecords
+  // Quick stats (based on role: admin sees overall stats, cashier sees today's stats)
+  const totalSales = baseRecords
     .filter(r => r.paid && !r.voided)
     .reduce((sum, r) => sum + (typeof r.price === "number" ? r.price : 0), 0);
 
-  const paidCount = todaysRecords.filter(r => r.paid && !r.voided).length;
-  const unpaidCount = todaysRecords.filter(r => !r.paid && !r.voided).length;
+  const paidCount = baseRecords.filter(r => r.paid && !r.voided).length;
+  const unpaidCount = baseRecords.filter(r => !r.paid && !r.voided).length;
 
-  // Filtered records for table (today only)
-  const filteredRecords = todaysRecords
+  // Filtered records for table (based on baseRecords)
+  const filteredRecords = baseRecords
     .filter(r => {
       const customerMatch = r.customerName.toLowerCase().includes(searchCustomer.toLowerCase());
       let statusMatch = true;
@@ -393,7 +402,7 @@ const SalesTransactionsPage: React.FC = () => {
       const productName = r.productName || r.serviceName || "";
       const productMatch = productFilter ? productName === productFilter : true;
       const dateMatch = dateFilter
-        ? format(new Date(r.createdAt), 'yyyy-MM-dd') === dateFilter
+        ? (() => { try { return format(new Date(r.createdAt), 'yyyy-MM-dd') === dateFilter; } catch { return false; } })()
         : true;
       return customerMatch && productMatch && dateMatch && statusMatch;
     })
@@ -418,8 +427,7 @@ const SalesTransactionsPage: React.FC = () => {
   const allSelectableIds = filteredRecords.filter(r => r.id).map(r => r.id!) as string[];
   const allSelected = allSelectableIds.length > 0 && allSelectableIds.every(id => selectedIds.includes(id));
 
-  // Get role from localStorage (default to 'cashier' for backward compatibility)
-  const role = (localStorage.getItem("role") as "admin" | "cashier") || "cashier";
+  // role and isAdmin are defined earlier above; reuse them
 
   // Logout handler
   const handleLogout = () => {
@@ -601,13 +609,13 @@ const SalesTransactionsPage: React.FC = () => {
                   </Avatar>
                   <Box>
                     <Typography variant="subtitle1" color="text.secondary" fontWeight={500}>
-                      Today's Sales
+                      {isAdmin ? "Overall Sales" : "Today's Sales"}
                     </Typography>
                     <Typography variant="h5" fontWeight={700} color={currentTheme.palette.success.dark}>
                       {loading ? <CircularProgress size={24} /> : peso(totalSales)}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      Today
+                      {isAdmin ? "Overall" : "Today"}
                     </Typography>
                   </Box>
                 </CardContent>
@@ -630,13 +638,13 @@ const SalesTransactionsPage: React.FC = () => {
                   </Avatar>
                   <Box>
                     <Typography variant="subtitle1" color="text.secondary" fontWeight={500}>
-                      Paid Transactions
+                      {isAdmin ? "Paid Transactions (Overall)" : "Paid Transactions"}
                     </Typography>
                     <Typography variant="h5" fontWeight={700} color={currentTheme.palette.info.dark}>
                       {loading ? <CircularProgress size={24} /> : paidCount}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      Completed payments
+                      {isAdmin ? "All paid transactions" : "Completed payments"}
                     </Typography>
                   </Box>
                 </CardContent>
@@ -659,13 +667,13 @@ const SalesTransactionsPage: React.FC = () => {
                   </Avatar>
                   <Box>
                     <Typography variant="subtitle1" color="text.secondary" fontWeight={500}>
-                      Unpaid Transactions
+                      {isAdmin ? "Unpaid Transactions (Overall)" : "Unpaid Transactions"}
                     </Typography>
                     <Typography variant="h5" fontWeight={700} color={currentTheme.palette.warning.dark}>
                       {loading ? <CircularProgress size={24} /> : unpaidCount}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      Pending payments
+                      {isAdmin ? "All unpaid transactions" : "Pending payments"}
                     </Typography>
                   </Box>
                 </CardContent>
@@ -771,7 +779,7 @@ const SalesTransactionsPage: React.FC = () => {
                 </Typography>
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                   <Typography variant="body2" color="text.secondary">
-                    Showing {filteredRecords.length} of {records.length} records
+                    Showing {filteredRecords.length} of {baseRecords.length} records
                   </Typography>
                   {/* Delete buttons for admin (moved here) */}
                   {role === "admin" && (
